@@ -7,14 +7,27 @@
 
 A simple C# async TCP server and client with integrated framing for reliable transmission and receipt of data.  
 
-## Test App
-A test project for both client and server are included which will help you understand and exercise the class library.
+## New in v1.3.x
+
+- Numerous fixes to authentication using preshared keys
+- Authentication callbacks in the client to handle authentication events
+  - ```AuthenticationRequested``` - authentication requested by the server, return the preshared key string (16 bytes)
+  - ```AuthenticationSucceeded``` - authentication has succeeded, return true
+  - ```AuthenticationFailure``` - authentication has failed, return true
+- Support for sending and receiving larger messages by using streams instead of byte arrays
+- Refer to ```TestServerStream``` and ```TestClientStream``` for a reference implementation.  You must set ```client.ReadDataStream = false``` and ```server.ReadDataStream = false``` and use the ```StreamReceived``` callback instead of ```MessageReceived```
+
+## Test Applications
+
+Test projects for both client and server are included which will help you understand and exercise the class library.
 
 ## SSL
-Two classes for each server and client are supplied, one without SSL support and one with.  The SSL server and client classes include fields for the PFX certificate file and password in the constructor.  An example certificate can be found in the TestSslClient and TestSslServer projects, which has a password of 'password'.
+
+WatsonTcp supports data exchange with or without SSL.  The server and client classes include constructors that allow you to include fields for the PFX certificate file and password.  An example certificate can be found in the test projects, which has a password of 'password'.
 
 ## Running under Mono
-Watson works well in Mono environments to the extent that we have tested it. It is recommended that when running under Mono, you execute the containing EXE using --server and after using the Mono Ahead-of-Time Compiler (AOT).  Note that TLS 1.2 is hard-coded, which may need to be downgraded to TLS in Mono environments.
+
+.NET Core should always be the preferred option for multi-platform deployments.  However, WatsonTcp works well in Mono environments with the .NET Framework to the extent that we have tested it. It is recommended that when running under Mono, you execute the containing EXE using --server and after using the Mono Ahead-of-Time Compiler (AOT).  Note that TLS 1.2 is hard-coded, which may need to be downgraded to TLS in Mono environments.
 
 NOTE: Windows accepts '0.0.0.0' as an IP address representing any interface.  On Mac and Linux you must be specified ('127.0.0.1' is also acceptable, but '0.0.0.0' is NOT).
 ```
@@ -23,10 +36,14 @@ mono --server myapp.exe
 ```
 
 ## Contributions
-Thanks to @brudo for his contributions to add async support to WatsonTcp (pushed in v1.0.7).
 
-## Example
-The following example shows a simple client and server example using WatsonTcp without SSL.
+Special thanks to @brudo and @MrMikeJJ for their support of this project!  
+
+If you'd like to contribute, please jump right into the source code and create a pull request. 
+
+## Examples
+
+The following examples show a simple client and server example using WatsonTcp without SSL.
 
 ### Server
 ```
@@ -34,7 +51,12 @@ using WatsonTcp;
 
 static void Main(string[] args)
 {
-    WatsonTcpServer server = new WatsonTcpServer("127.0.0.1", 9000, ClientConnected, ClientDisconnected, MessageReceived, true);
+    WatsonTcpServer server = new WatsonTcpServer("127.0.0.1", 9000);
+    server.ClientConnected = ClientConnected;
+    server.ClientDisconnected = ClientDisconnected;
+    server.MessageReceived = MessageReceived;
+    server.Debug = false;
+    server.Start();
 
     bool runForever = true;
     while (runForever)
@@ -102,12 +124,17 @@ using WatsonTcp;
 
 static void Main(string[] args)
 {
-    WatsonTcpClient client = new WatsonTcpClient("127.0.0.1", 9000, ServerConnected, ServerDisconnected, MessageReceived, true);
+    WatsonTcpClient client = new WatsonTcpClient("127.0.0.1", 9000);
+    client.ServerConnected = ServerConnected;
+    client.ServerDisconnected = ServerDisconnected;
+    client.MessageReceived = MessageReceived;
+    client.Debug = false;
+    client.Start();
 
     bool runForever = true;
     while (runForever)
     {
-        Console.Write("Command [q cls send]: ");
+        Console.Write("Command [q cls send auth]: ");
         string userInput = Console.ReadLine();
         if (String.IsNullOrEmpty(userInput)) continue;
 
@@ -124,6 +151,12 @@ static void Main(string[] args)
                 userInput = Console.ReadLine();
                 if (String.IsNullOrEmpty(userInput)) break;
                 client.Send(Encoding.UTF8.GetBytes(userInput));
+                break;
+            case "auth":
+                Console.Write("Preshared key: ");
+                userInput = Console.ReadLine();
+                if (String.IsNullOrEmpty(userInput)) break;
+                client.Authenticate(userInput);
                 break;
         }
     }
@@ -149,15 +182,77 @@ static bool ServerDisconnected()
 ```
 
 ## Example with SSL
-The examples above can be modified to use WatsonTcpSslServer and WatsonTcpSslClient as follows.  No other changes are needed.  Ensure that the certificate is exported as a PFX file and is resident in the directory of execution.
 
-### Server
+The examples above can be modified to use SSL as follows.  No other changes are needed.  Ensure that the certificate is exported as a PFX file and is resident in the directory of execution.
 ```
-WatsonTcpSslServer server = new WatsonTcpSslServer("127.0.0.1", 9000, "test.pfx", "password", true, ClientConnected, ClientDisconnected, MessageReceived, true);
+// server
+WatsonTcpServer server = new WatsonTcpSslServer("127.0.0.1", 9000, "test.pfx", "password");
+server.ClientConnected = ClientConnected;
+server.ClientDisconnected = ClientDisconnected;
+server.MessageReceived = MessageReceived;
+server.AcceptInvalidCertificates = true;
+server.MutuallyAuthenticate = true;
+server.Start();
+
+// client
+WatsonTcpClient client = new WatsonTcpClient("127.0.0.1", 9000, "test.pfx", "password");
+client.ServerConnected = ServerConnected;
+client.ServerDisconnected = ServerDisconnected;
+client.MessageReceived = MessageReceived;
+client.AcceptInvalidCertificates = true;
+client.MutuallyAuthenticate = true;
+client.Start();
 ```
 
-### Client
+## Example with Streams
+
+Refer to the ```TestClientStream``` and ```TestServerStream``` projects for a full example
 ```
-WatsonTcpSslClient client = new WatsonTcpSslClient("127.0.0.1", 9000, "test.pfx", "password", true, ServerConnected, ServerDisconnected, MessageReceived, true);
+// server
+WatsonTcpServer server = new WatsonTcpSslServer("127.0.0.1", 9000);
+server.ClientConnected = ClientConnected;
+server.ClientDisconnected = ClientDisconnected;
+server.StreamReceived = StreamReceived;
+server.ReadDataStream = false;
+server.Start();
+
+static bool StreamReceived(string ipPort, long contentLength, Stream stream)
+{
+    // read contentLength bytes from the stream from client ipPort and process
+    return true;
+}
+
+// client
+WatsonTcpClient client = new WatsonTcpClient("127.0.0.1", 9000);
+client.ServerConnected = ServerConnected;
+client.ServerDisconnected = ServerDisconnected;
+client.StreamReceived = StreamReceived;
+client.ReadDataStream = false;
+client.Start();
+
+static bool StreamReceived(long contentLength, Stream stream)
+{
+    // read contentLength bytes from the stream and process
+    return true;
+}
 ```
 
+## Version History
+
+v1.2.x
+- Breaking changes for assigning callbacks, various server/client class variables, and starting them
+- Consolidated SSL and non-SSL clients and servers into single classes for each
+- Retargeted test projects to both .NET Core and .NET Framework
+- Added more extensible framing support to later carry more metadata as needed
+- Added authentication via pre-shared key (set Server.PresharedKey class variable, and use Client.Authenticate() method)
+
+v1.1.x
+- Re-targeted to both .NET Core 2.0 and .NET Framework 4.5.2
+- Various bugfixes
+
+v1.0.x
+- Initial release
+- Async support and IDisposable support
+- IP filtering/permitted IP addresses support
+- Improved disconnect detection
+- SSL support
